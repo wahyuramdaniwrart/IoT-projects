@@ -15,8 +15,8 @@
 #include <SD.h>
 #include "MQUnifiedsensor.h"
 
-#define WIFI_SSID "@unram.ac.id"
-#define WIFI_PASSWORD ""
+#define WIFI_SSID "Bqozhr"
+#define WIFI_PASSWORD "Aryakmprt79"
 #define MQTT_BROKER "mqtt.eclipseprojects.io"
 #define MQTT_PORT 1883
 
@@ -28,21 +28,30 @@ Adafruit_ADS1115 ads1;
 Adafruit_ADS1115 ads2;
 
 // Konfigurasi DS18B20
-#define ONE_WIRE_BUS 26
+#define ONE_WIRE_BUS 33
 OneWire oneWire(ONE_WIRE_BUS);
 DallasTemperature ds18b20(&oneWire);
 float suhu[3];
 
 // Konfigurasi MPX5700AP
+
 #define TC_PIN1 32
 #define TC_PIN2 34
 #define TC_PIN3 35
+#define AREF 3.3           // set to AREF, typically board voltage like 3.3 or 5.0
+#define ADC_RESOLUTION 12  // set to ADC bit resolution, 10 is default
 #define DIVIDER_RATIO 1.45
 
 Ewma adcFilter1(0.1);
 Ewma adcFilter2(0.1);
 Ewma adcFilter3(0.1);
 float tekanan1, tekanan2, tekanan3;
+
+ float get_voltage(int raw_adc) {
+    return raw_adc * (AREF / (pow(2, ADC_RESOLUTION) - 1));
+  }
+
+//mq sensor
 float MQ4_1, MQ4_2, MQ4_3, MQ135_1, MQ135_2, MQ135_3;
 
 // Konfigurasi DHT11
@@ -61,17 +70,15 @@ bool wifiStatus = false;
 bool rekamData = false;
 bool kirimData = false;
 
-
-
 // Konfigurasi SD Card
 #define SD_CS 5
 
 // Timer
 unsigned long previousMillis = 0;
-const long interval = 5000; // Interval pembaruan tampilan (2 detik)
+const long interval = 5000; // Interval pembaruan tampilan (5 detik)
 int sensorIndex = 0;
 
-// bitmap
+// Bitmap untuk indikator status
 static const unsigned char PROGMEM wifi [] = {
   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x07, 0x00, 0x00, 0x07, 0x00, 0x00, 0x07, 0x00, 0x00, 
 	0x07, 0x00, 0x00, 0x07, 0x00, 0x00, 0x37, 0x00, 0x00, 0x37, 0x00, 0x00, 0x37, 0x00, 0x00, 0x37, 
@@ -187,7 +194,6 @@ const unsigned char wrart [] PROGMEM = {
 	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
 };
 
-
 void setup() {
     Serial.begin(115200);
 
@@ -218,15 +224,27 @@ void setup() {
         Serial.println("SSD1306 initialization failed!");
     }
     display.clearDisplay();
-    display.drawBitmap(0,0, wrart, 128, 64, WHITE);
+    display.drawBitmap(0, 0, wrart, 128, 64, WHITE);
     display.display();
 }
 
 void loop() {
     unsigned long currentMillis = millis();
 
-    // Pembacaan sensor setiap 2 detik
-    if (currentMillis - previousMillis >= interval) {
+    // Periksa status WiFi secara berkala
+    wifiStatus = (WiFi.status() == WL_CONNECTED);
+
+    // Periksa status SD Card secara berkala
+    rekamData = SD.begin(SD_CS);
+
+    // Periksa status MQTT secara berkala
+    if (!client.connected()) {
+        reconnect();
+    }
+    client.loop();
+
+    // Pembacaan sensor setiap 5 detik
+    if (currentMillis - previousMillis >= 2000) {
         previousMillis = currentMillis;
 
         // Baca semua sensor
@@ -238,18 +256,16 @@ void loop() {
         // Kirim data ke MQTT
         mqtt();
 
-        // rekamdata
-        logData();
-
         // Ganti tampilan sensor
         sensorIndex = (sensorIndex + 1) % 5;
     }
 
-    // Periksa koneksi MQTT
-    if (!client.connected()) {
-        reconnect();
+        if (currentMillis - previousMillis >= 3600000) {
+        previousMillis = currentMillis;
+
+        // Rekam data ke SD Card
+        logData();
     }
-    client.loop();
 }
 
 void readSensors() {
@@ -260,9 +276,9 @@ void readSensors() {
     }
 
     // Baca tekanan MPX5700AP
-    tekanan1 = readMPX(TC_PIN1, adcFilter1);
-    tekanan2 = readMPX(TC_PIN2, adcFilter2);
-    tekanan3 = readMPX(TC_PIN3, adcFilter3);
+    tekanan1 = readMPX(TC_PIN1) - 5.63;
+    tekanan2 = readMPX(TC_PIN2) - 5.63;
+    tekanan3 = readMPX(TC_PIN3) - 6.63;
 
     // Baca DHT11
     suhu_dht = dht.readTemperature();
@@ -272,10 +288,11 @@ void readSensors() {
     MQ135_1 = mq135Calb(readVoltage(ads1, 0));
     MQ135_2 = mq135Calb(readVoltage(ads1, 1));
     MQ135_3 = mq135Calb(readVoltage(ads1, 2));
+    
 
-    MQ4_1 = mq4Calb(readVoltage(ads2, 0));
-    MQ4_2 = mq4Calb(readVoltage(ads2, 1));
-    MQ4_3 = mq4Calb(readVoltage(ads2, 2));
+    MQ4_1 = mq4Calb(readVoltage(ads1, 3));
+    MQ4_2 = mq4Calb(readVoltage(ads2, 0));
+    MQ4_3 = mq4Calb(readVoltage(ads2, 1));
 }
 
 void displayData() {
@@ -317,7 +334,7 @@ void displayData() {
             break;
         case 3:
             display.println("Suhu Bahan (C):");
-            display.printf("1: %.2f\n", suhu[0]);
+            display.printf("1: %.2f\n", suhu[0] - 1);
             display.printf("2: %.2f\n", suhu[1]);
             display.printf("3: %.2f\n", suhu[2]);
             break;
@@ -330,7 +347,6 @@ void displayData() {
 
     display.display();
 }
-
 
 void mqtt() {
     if (!client.connected()) {
@@ -365,7 +381,7 @@ void mqtt() {
     snprintf(payload, sizeof(payload), "%.2f", tekanan3);
     client.publish("sensor/tekanan3", payload);
     
-    snprintf(payload, sizeof(payload), "%.2f", suhu[0]);
+    snprintf(payload, sizeof(payload), "%.2f", suhu[0]- 1);
     client.publish("sensor/temp1", payload);
     
     snprintf(payload, sizeof(payload), "%.2f", suhu[1]);
@@ -380,7 +396,6 @@ void mqtt() {
     snprintf(payload, sizeof(payload), "%.2f", kelembaban);
     client.publish("sensor/dht_hum", payload);
 
-    // Kirim data lainnya...
     kirimData = true;
 }
 
@@ -390,7 +405,7 @@ void logData() {
                       String(MQ135_1) + "," + String(MQ135_2) + "," + String(MQ135_3) + "," +
                       String(MQ4_1) + "," + String(MQ4_2) + "," + String(MQ4_3) + "," +
                       String(tekanan1) + "," + String(tekanan2) + "," + String(tekanan3) + "," +
-                      String(suhu[0]) + "," + String(suhu[1]) + "," + String(suhu[2]) + "," +
+                      String(suhu[0] - 1) + "," + String(suhu[1]) + "," + String(suhu[2]) + "," +
                       String(suhu_dht) + "," + String(kelembaban);
 
         File file = SD.open("/data.csv", FILE_APPEND);
@@ -418,13 +433,21 @@ void reconnect() {
     }
 }
 
-float readMPX(int pin, Ewma &filter) {
-    int raw = analogRead(pin) - 520;
-    float filtered = filter.filter(raw);
-    float V_adc = (filtered * 3.3) / 4095;
-    float V_sensor = ((V_adc / (5.0 * DIVIDER_RATIO))) / 0.0012858;
-    float calibrated_pressure = (2.3488 * V_sensor) - 0.6846;
-    return calibrated_pressure < 0 ? 0 : calibrated_pressure;
+// float readMPX(int pin, Ewma &filter) {
+//     float raw = analogRead(pin);
+//     Serial.println(analogRead(pin));
+//     float filtered = filter.filter(raw);
+//     float V_adc = (filtered * 3.3) / 4095;
+//     float V_sensor = (V_adc / 3.3 )* DIVIDER_RATIO / 0.0012858;
+//     float calibrated_pressure = (0.0009 * V_sensor * V_sensor) + (2.2194 * V_sensor) + 2.0596;
+//     return raw < 0 ? 0 : raw;
+// }
+
+float readMPX(int pin) {
+    
+    int raw = analogRead(pin);
+    float kPa = (3E-05 * raw * raw) + (0.0964 * raw) - 61.954;     
+    return kPa;
 }
 
 float mq135Calb(float voltage) {
@@ -437,5 +460,6 @@ float mq4Calb(float voltage) {
 
 float readVoltage(Adafruit_ADS1115 &ads, int channel) {
     int16_t adc = ads.readADC_SingleEnded(channel);
+    Serial.println(adc);
     return (adc * 0.1875) / 1000.0; // Konversi ke volt
 }
