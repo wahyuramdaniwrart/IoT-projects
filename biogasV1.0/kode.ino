@@ -244,7 +244,7 @@ void loop() {
     client.loop();
 
     // Pembacaan sensor setiap 5 detik
-    if (currentMillis - previousMillis >= 2000) {
+    if (currentMillis - previousMillis >= 10000) {
         previousMillis = currentMillis;
 
         // Baca semua sensor
@@ -260,7 +260,7 @@ void loop() {
         sensorIndex = (sensorIndex + 1) % 5;
     }
 
-        if (currentMillis - previousMillis >= 3600000) {
+    if (currentMillis - previousMillis >= 3600000) {
         previousMillis = currentMillis;
 
         // Rekam data ke SD Card
@@ -276,9 +276,9 @@ void readSensors() {
     }
 
     // Baca tekanan MPX5700AP
-    tekanan1 = readMPX(TC_PIN1) - 5.63;
-    tekanan2 = readMPX(TC_PIN2) - 5.63;
-    tekanan3 = readMPX(TC_PIN3) - 6.63;
+    tekanan1 = readMPX(TC_PIN1, adcFilter1) - 5.63;
+    tekanan2 = readMPX(TC_PIN2, adcFilter2) - 5.63;
+    tekanan3 = readMPX(TC_PIN3, adcFilter3) - 6.63;
 
     // Baca DHT11
     suhu_dht = dht.readTemperature();
@@ -408,7 +408,7 @@ void logData() {
                       String(suhu[0] - 1) + "," + String(suhu[1]) + "," + String(suhu[2]) + "," +
                       String(suhu_dht) + "," + String(kelembaban);
 
-        File file = SD.open("/data.csv", FILE_APPEND);
+        File file = SD.open("data.csv", FILE_APPEND);
         if (file) {
             file.println(data);
             file.close();
@@ -443,10 +443,11 @@ void reconnect() {
 //     return raw < 0 ? 0 : raw;
 // }
 
-float readMPX(int pin) {
+float readMPX(int pin, Ewma &filter) {
     
-    int raw = analogRead(pin);
-    float kPa = (3E-05 * raw * raw) + (0.0964 * raw) - 61.954;     
+    float raw = analogRead(pin);
+    float filtered = filter.filter(raw);
+    float kPa = (3E-05 * filtered * filtered) + (0.0964 * filtered) - 61.954;     
     return kPa;
 }
 
